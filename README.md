@@ -131,20 +131,6 @@ Full documentation is available here:
 https://docs.vixcpp.com/cli/repl
 ```
 
-## Module layout
-
-```text
-include/vix/reply/
-  api/
-  console/
-  core/
-
-src/
-  api/
-  console/
-  core/
-```
-
 ## Public entry point
 
 ```cpp
