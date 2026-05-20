@@ -41,6 +41,9 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -77,6 +80,7 @@ namespace
   struct TerminalRawMode
   {
     termios old{};
+    bool available = false;
     bool enabled = false;
 
     TerminalRawMode()
@@ -87,6 +91,17 @@ namespace
       }
 
       if (tcgetattr(STDIN_FILENO, &old) != 0)
+      {
+        return;
+      }
+
+      available = true;
+      enable();
+    }
+
+    void enable()
+    {
+      if (!available || enabled)
       {
         return;
       }
@@ -108,12 +123,20 @@ namespace
       }
     }
 
+    void disable()
+    {
+      if (!enabled)
+      {
+        return;
+      }
+
+      tcsetattr(STDIN_FILENO, TCSANOW, &old);
+      enabled = false;
+    }
+
     ~TerminalRawMode()
     {
-      if (enabled)
-      {
-        tcsetattr(STDIN_FILENO, TCSANOW, &old);
-      }
+      disable();
     }
   };
 #endif
@@ -164,6 +187,10 @@ namespace
         << "Math:\n"
         << "  <expr>                  Evaluate expression, for example 1+2*(3+4)\n"
         << "  calc <expr>             Evaluate expression explicitly\n"
+        << "C++ snippets:\n"
+        << "  :cpp                   Enter C++ snippet mode\n"
+        << "  :run                   Run the current C++ snippet\n"
+        << "  :cancel                Cancel C++ snippet mode\n"
         << "\n";
 
     print_commands_from_dispatcher();
@@ -178,6 +205,178 @@ namespace
     }
 
     return vix::reply::trim_copy(s);
+  }
+
+  static std::string shell_quote(const std::string &value)
+  {
+#if defined(_WIN32)
+    std::string out = "\"";
+
+    for (char c : value)
+    {
+      if (c == '"')
+      {
+        out += "\\\"";
+      }
+      else
+      {
+        out.push_back(c);
+      }
+    }
+
+    out += "\"";
+    return out;
+#else
+    std::string out = "'";
+
+    for (char c : value)
+    {
+      if (c == '\'')
+      {
+        out += "'\\''";
+      }
+      else
+      {
+        out.push_back(c);
+      }
+    }
+
+    out += "'";
+    return out;
+#endif
+  }
+
+  static int count_cpp_braces_delta(const std::string &line)
+  {
+    int delta = 0;
+    bool inString = false;
+    bool inChar = false;
+    bool escaping = false;
+
+    for (char c : line)
+    {
+      if (escaping)
+      {
+        escaping = false;
+        continue;
+      }
+
+      if (c == '\\')
+      {
+        escaping = true;
+        continue;
+      }
+
+      if (inString)
+      {
+        if (c == '"')
+        {
+          inString = false;
+        }
+
+        continue;
+      }
+
+      if (inChar)
+      {
+        if (c == '\'')
+        {
+          inChar = false;
+        }
+
+        continue;
+      }
+
+      if (c == '"')
+      {
+        inString = true;
+        continue;
+      }
+
+      if (c == '\'')
+      {
+        inChar = true;
+        continue;
+      }
+
+      if (c == '{')
+      {
+        ++delta;
+      }
+      else if (c == '}')
+      {
+        --delta;
+      }
+    }
+
+    return delta;
+  }
+
+  static bool looks_like_cpp_main(const std::string &line)
+  {
+    return line.find("main(") != std::string::npos ||
+           line.find("main (") != std::string::npos;
+  }
+
+  static int run_cpp_snippet(const std::vector<std::string> &lines)
+  {
+    if (lines.empty())
+    {
+      std::cout << "error: no C++ code to run\n";
+      return 1;
+    }
+
+    std::error_code ec;
+
+    const fs::path root =
+        fs::temp_directory_path(ec) / "vix-reply";
+
+    if (ec)
+    {
+      std::cout << "error: cannot resolve temporary directory: " << ec.message() << "\n";
+      return 1;
+    }
+
+    fs::create_directories(root, ec);
+
+    if (ec)
+    {
+      std::cout << "error: cannot create temporary directory: " << ec.message() << "\n";
+      return 1;
+    }
+
+    const auto now =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+
+    const fs::path file =
+        root / ("snippet-" + std::to_string(now) + ".cpp");
+
+    {
+      std::ofstream out(file, std::ios::trunc);
+
+      if (!out.is_open())
+      {
+        std::cout << "error: cannot write C++ snippet: " << file.string() << "\n";
+        return 1;
+      }
+
+      for (const auto &line : lines)
+      {
+        out << line << '\n';
+      }
+    }
+
+#if defined(_WIN32)
+    const std::string command = "vix run " + shell_quote(file.string());
+#else
+    const std::string command = "vix run " + shell_quote(file.string());
+#endif
+
+    const int rc = std::system(command.c_str());
+
+    fs::remove(file, ec);
+
+    return rc;
   }
 
   static std::string to_string(const vix::reply::api::CallValue &v)
@@ -1846,10 +2045,37 @@ namespace vix::reply
     std::string histDraft;
 #endif
 
+#ifndef _WIN32
+    auto run_cpp_snippet_from_repl = [&](const std::vector<std::string> &lines) -> int
+    {
+      rawMode.disable();
+
+      const int rc = run_cpp_snippet(lines);
+
+      rawMode.enable();
+
+      return rc;
+    };
+#else
+    auto run_cpp_snippet_from_repl = [&](const std::vector<std::string> &lines) -> int
+    {
+      return run_cpp_snippet(lines);
+    };
+#endif
+
+    bool cppMode = false;
+    bool cppSeenMain = false;
+    int cppBraceDepth = 0;
+    std::vector<std::string> cppLines;
+
     while (true)
     {
       const fs::path cwd = fs::current_path();
-      const std::string prompt = make_prompt(cwd);
+
+      const std::string prompt =
+          cppMode
+              ? (cppLines.empty() ? "cpp> " : "...   ")
+              : make_prompt(cwd);
 
       std::string line;
 
@@ -2149,6 +2375,67 @@ namespace vix::reply
       }
 
       history.add(line);
+
+      if (cppMode)
+      {
+        if (line == ":cancel" || line == ".cancel")
+        {
+          cppMode = false;
+          cppSeenMain = false;
+          cppBraceDepth = 0;
+          cppLines.clear();
+
+          std::cout << "C++ snippet cancelled\n";
+          continue;
+        }
+
+        if (line == ":run" || line == ".run")
+        {
+          const int rc = run_cpp_snippet_from_repl(cppLines);
+
+          cppMode = false;
+          cppSeenMain = false;
+          cppBraceDepth = 0;
+          cppLines.clear();
+
+          (void)rc;
+          continue;
+        }
+
+        cppLines.push_back(line);
+
+        if (looks_like_cpp_main(line))
+        {
+          cppSeenMain = true;
+        }
+
+        cppBraceDepth += count_cpp_braces_delta(line);
+
+        if (cppSeenMain && cppBraceDepth <= 0 && line.find('}') != std::string::npos)
+        {
+          const int rc = run_cpp_snippet_from_repl(cppLines);
+
+          cppMode = false;
+          cppSeenMain = false;
+          cppBraceDepth = 0;
+          cppLines.clear();
+
+          (void)rc;
+        }
+
+        continue;
+      }
+
+      if (line == ":cpp" || line == ".cpp")
+      {
+        cppMode = true;
+        cppSeenMain = false;
+        cppBraceDepth = 0;
+        cppLines.clear();
+
+        std::cout << "C++ mode. Type :run to execute or :cancel to exit.\n";
+        continue;
+      }
 
       if (auto assignment = parse_assignment(line))
       {
