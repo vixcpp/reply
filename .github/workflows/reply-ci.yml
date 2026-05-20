@@ -1,0 +1,212 @@
+name: Reply CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+      - release/**
+    paths:
+      - ".github/workflows/reply-ci.yml"
+      - "CMakeLists.txt"
+      - "include/**"
+      - "src/**"
+      - "tests/**"
+      - "examples/**"
+      - "README.md"
+      - "CHANGELOG.md"
+
+  pull_request:
+    branches:
+      - main
+      - master
+      - dev
+      - release/**
+    paths:
+      - ".github/workflows/reply-ci.yml"
+      - "CMakeLists.txt"
+      - "include/**"
+      - "src/**"
+      - "tests/**"
+      - "examples/**"
+      - "README.md"
+      - "CHANGELOG.md"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BUILD_JOBS: 2
+
+jobs:
+  build:
+    name: Build Reply (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - gcc
+          - clang
+
+    steps:
+      - name: Checkout reply repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            clang \
+            g++ \
+            pkg-config \
+            git \
+            ca-certificates \
+            nlohmann-json3-dev
+
+      - name: Select compiler
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            echo "CC=clang" >> "$GITHUB_ENV"
+            echo "CXX=clang++" >> "$GITHUB_ENV"
+          else
+            echo "CC=gcc" >> "$GITHUB_ENV"
+            echo "CXX=g++" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DVIX_REPLY_BUILD_TESTS=ON \
+            -DVIX_REPLY_BUILD_EXAMPLES=ON \
+            -DVIX_REPLY_ENABLE_LTO=OFF
+
+      - name: Build
+        run: |
+          cmake --build build -j"${BUILD_JOBS}"
+
+      - name: Run tests
+        run: |
+          ctest --test-dir build --output-on-failure --timeout 90
+
+  install-check:
+    name: Install Reply
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout reply repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            g++ \
+            pkg-config \
+            git \
+            ca-certificates \
+            nlohmann-json3-dev
+
+      - name: Configure installable build
+        run: |
+          cmake -S . -B build-install -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVIX_REPLY_BUILD_TESTS=OFF \
+            -DVIX_REPLY_BUILD_EXAMPLES=OFF \
+            -DVIX_REPLY_ENABLE_LTO=OFF \
+            -DCMAKE_INSTALL_PREFIX="${PWD}/.ci-install"
+
+      - name: Build installable package
+        run: |
+          cmake --build build-install -j"${BUILD_JOBS}"
+
+      - name: Install package
+        run: |
+          cmake --install build-install
+
+      - name: Verify install tree
+        run: |
+          find .ci-install -maxdepth 8 -type f | sort
+
+          test -d .ci-install/include/vix
+          test -f .ci-install/lib/cmake/vix_reply/vix_replyTargets.cmake
+
+  config-coverage:
+    name: Configuration Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout reply repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            g++ \
+            pkg-config \
+            git \
+            ca-certificates \
+            nlohmann-json3-dev
+
+      - name: Configure release mode
+        run: |
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVIX_REPLY_BUILD_TESTS=OFF \
+            -DVIX_REPLY_BUILD_EXAMPLES=OFF \
+            -DVIX_REPLY_ENABLE_LTO=OFF
+
+      - name: Build release mode
+        run: |
+          cmake --build build-release -j"${BUILD_JOBS}"
+
+      - name: Configure LTO release mode
+        run: |
+          cmake -S . -B build-lto -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVIX_REPLY_BUILD_TESTS=OFF \
+            -DVIX_REPLY_BUILD_EXAMPLES=OFF \
+            -DVIX_REPLY_ENABLE_LTO=ON
+
+      - name: Build LTO release mode
+        run: |
+          cmake --build build-lto -j"${BUILD_JOBS}"
+
+  summary:
+    name: Reply CI Summary
+    needs:
+      - build
+      - install-check
+      - config-coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Print summary
+        run: |
+          echo "Reply CI completed."
+          echo "- gcc and clang builds"
+          echo "- tests when available"
+          echo "- install tree check"
+          echo "- release and LTO configuration coverage"
