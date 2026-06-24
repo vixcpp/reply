@@ -41,4 +41,6 @@
 #include <vix/reply/core/ReplMath.hpp>
 #include <vix/reply/core/ReplUtils.hpp>
 
+#include <vix/reply/core/ReplyRuntime.hpp>
+
 #endif // VIX_REPLY_REPLY_HPP
