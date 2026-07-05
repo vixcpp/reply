@@ -2328,16 +2328,6 @@ namespace vix::reply
           return result;
         }
 
-        if (trimmed.size() >= cmd.size() + 1 && trimmed == (cmd + " "))
-        {
-          if (!opts.empty())
-          {
-            result.suggestions = opts;
-            normalize_list(result.suggestions);
-            return result;
-          }
-        }
-
         return result;
       };
 
