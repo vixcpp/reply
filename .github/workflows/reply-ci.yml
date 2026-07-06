@@ -16,6 +16,7 @@ on:
       - "examples/**"
       - "README.md"
       - "CHANGELOG.md"
+      - "LICENSE"
 
   pull_request:
     branches:
@@ -32,6 +33,7 @@ on:
       - "examples/**"
       - "README.md"
       - "CHANGELOG.md"
+      - "LICENSE"
 
   workflow_dispatch:
 
@@ -40,10 +42,22 @@ permissions:
 
 env:
   BUILD_JOBS: 2
+  DEPS: >
+    build-essential
+    cmake
+    ninja-build
+    clang
+    g++
+    cppcheck
+    clang-tidy
+    pkg-config
+    git
+    ca-certificates
+    nlohmann-json3-dev
 
 jobs:
   build:
-    name: Build Reply (${{ matrix.compiler }})
+    name: Build Reply (${{ matrix.compiler }}, examples=${{ matrix.examples }})
     runs-on: ubuntu-latest
 
     strategy:
@@ -52,6 +66,9 @@ jobs:
         compiler:
           - gcc
           - clang
+        examples:
+          - OFF
+          - ON
 
     steps:
       - name: Checkout reply repository
@@ -62,16 +79,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            ninja-build \
-            clang \
-            g++ \
-            pkg-config \
-            git \
-            ca-certificates \
-            nlohmann-json3-dev
+          sudo apt-get install -y --no-install-recommends $DEPS
 
       - name: Select compiler
         run: |
@@ -89,7 +97,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DVIX_REPLY_BUILD_TESTS=ON \
-            -DVIX_REPLY_BUILD_EXAMPLES=ON \
+            -DVIX_REPLY_BUILD_EXAMPLES=${{ matrix.examples }} \
             -DVIX_REPLY_ENABLE_LTO=OFF
 
       - name: Build
@@ -99,6 +107,64 @@ jobs:
       - name: Run tests
         run: |
           ctest --test-dir build --output-on-failure --timeout 90
+
+      - name: Print artifacts
+        run: |
+          find build -maxdepth 6 -type f | sort
+
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout reply repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $DEPS
+
+      - name: Configure for analysis
+        run: |
+          cmake -S . -B build-analyze -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DVIX_REPLY_BUILD_TESTS=ON \
+            -DVIX_REPLY_BUILD_EXAMPLES=ON \
+            -DVIX_REPLY_ENABLE_LTO=OFF
+
+      - name: Run clang-tidy
+        run: |
+          set +e
+          find src -name '*.cpp' -print0 | xargs -0 -r -n1 -P2 clang-tidy -p build-analyze
+          STATUS=$?
+          if [ $STATUS -ne 0 ]; then
+            echo "::warning::clang-tidy reported issues."
+          else
+            echo "clang-tidy completed successfully."
+          fi
+          exit 0
+
+      - name: Run cppcheck
+        run: |
+          set +e
+          cppcheck \
+            --enable=all \
+            --std=c++20 \
+            --inconclusive \
+            --quiet \
+            --suppress=missingIncludeSystem \
+            include/ src/
+          STATUS=$?
+          if [ $STATUS -ne 0 ]; then
+            echo "::warning::cppcheck reported issues."
+          else
+            echo "cppcheck completed successfully."
+          fi
+          exit 0
 
   install-check:
     name: Install Reply
@@ -113,15 +179,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            ninja-build \
-            g++ \
-            pkg-config \
-            git \
-            ca-certificates \
-            nlohmann-json3-dev
+          sudo apt-get install -y --no-install-recommends $DEPS
 
       - name: Configure installable build
         run: |
@@ -144,7 +202,7 @@ jobs:
         run: |
           find .ci-install -maxdepth 8 -type f | sort
 
-          test -d .ci-install/include/vix
+          test -d .ci-install/include/vix/reply
           test -f .ci-install/lib/cmake/vix_reply/vix_replyTargets.cmake
 
   config-coverage:
@@ -160,15 +218,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            ninja-build \
-            g++ \
-            pkg-config \
-            git \
-            ca-certificates \
-            nlohmann-json3-dev
+          sudo apt-get install -y --no-install-recommends $DEPS
 
       - name: Configure release mode
         run: |
@@ -198,6 +248,7 @@ jobs:
     name: Reply CI Summary
     needs:
       - build
+      - static-analysis
       - install-check
       - config-coverage
     runs-on: ubuntu-latest
@@ -208,5 +259,6 @@ jobs:
           echo "Reply CI completed."
           echo "- gcc and clang builds"
           echo "- tests when available"
+          echo "- static analysis"
           echo "- install tree check"
           echo "- release and LTO configuration coverage"
