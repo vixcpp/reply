@@ -1,0 +1,54 @@
+{
+  "namespace": "vix",
+  "name": "reply",
+  "displayName": "Vix Reply",
+  "version": "0.1.1",
+  "type": "library",
+  "license": "MIT",
+  "description": "Interactive REPL engine for Vix with prompt handling, history, expressions, JSON values, and C++ snippet support.",
+  "repository": "https://github.com/vixcpp/reply.git",
+  "documentation": "https://github.com/vixcpp/reply#readme",
+  "include": "include",
+  "standard": "c++20",
+  "keywords": [
+    "vix",
+    "cpp",
+    "reply",
+    "repl",
+    "interactive",
+    "cli"
+  ],
+  "authors": [
+    {
+      "name": "Gaspard Kirira"
+    }
+  ],
+  "maintainers": [
+    {
+      "name": "Gaspard Kirira"
+    }
+  ],
+  "exports": {
+    "modules": [
+      "vix::reply"
+    ],
+    "namespaces": [
+      "vix::reply"
+    ]
+  },
+  "constraints": {
+    "platforms": [
+      "linux",
+      "macos",
+      "windows"
+    ]
+  },
+  "dependencies": {
+    "git": [],
+    "registry": [],
+    "system": [
+      "nlohmann_json"
+    ]
+  },
+  "deps": []
+}
