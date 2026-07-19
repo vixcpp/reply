@@ -19,6 +19,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <cstddef>
 
 namespace vix::reply
 {
@@ -87,6 +88,39 @@ namespace vix::reply
   using HistoryNavFn = std::function<bool(std::string &line)>;
 
   /**
+   * @brief Keyboard behavior used by the line editor.
+   */
+  enum class LineEditorKeymap
+  {
+    Default,
+    Vi
+  };
+
+  /**
+   * @brief Editing behavior applied to one input line.
+   */
+  struct LineEditorOptions
+  {
+    /**
+     * @brief Text already present when editing starts.
+     */
+    std::string initialLine;
+
+    /**
+     * @brief Enables code-oriented editing behavior.
+     */
+    bool codeMode = false;
+
+    /**
+     * @brief Number of spaces inserted for one indentation level.
+     */
+    std::size_t indentSize = 2;
+
+    LineEditorKeymap keymap =
+        LineEditorKeymap::Default;
+  };
+
+  /**
    * @brief Reads one line from the interactive REPL using line editing.
    *
    * This function handles the prompt, current input line, completion callback,
@@ -104,7 +138,8 @@ namespace vix::reply
       std::string &outLine,
       const CompletionFn &completer,
       const HistoryNavFn &onHistoryUp,
-      const HistoryNavFn &onHistoryDown);
+      const HistoryNavFn &onHistoryDown,
+      const LineEditorOptions &options = {});
 }
 
 #endif

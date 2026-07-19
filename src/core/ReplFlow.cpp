@@ -141,27 +141,59 @@ namespace
   };
 #endif
 
+  static std::string compiler_label()
+  {
+#if defined(__clang__)
+    return "clang " +
+           std::to_string(__clang_major__) +
+           "." +
+           std::to_string(__clang_minor__);
+#elif defined(__GNUC__)
+    return "gcc " +
+           std::to_string(__GNUC__) +
+           "." +
+           std::to_string(__GNUC_MINOR__);
+#else
+    return "c++";
+#endif
+  }
+
+  static std::string platform_label()
+  {
+#if defined(_WIN32)
+    return "windows";
+#elif defined(__APPLE__)
+    return "macos";
+#elif defined(__linux__)
+    return "linux";
+#else
+    return "unknown";
+#endif
+  }
+
   static void print_banner()
   {
-    std::cout << "Vix Reply " << VIX_REPLY_VERSION << "  REPL\n";
+    constexpr std::string_view brandColor =
+        "1;38;2;243;119;38";
 
-#if defined(__clang__)
-    std::cout << "clang " << __clang_major__ << "." << __clang_minor__;
-#elif defined(__GNUC__)
-    std::cout << "gcc " << __GNUC__ << "." << __GNUC_MINOR__;
-#else
-    std::cout << "c++";
-#endif
-
-#if defined(_WIN32)
-    std::cout << "  windows\n";
-#elif defined(__APPLE__)
-    std::cout << "  macos\n";
-#else
-    std::cout << "  linux\n";
-#endif
-
-    std::cout << "exit: Ctrl+D | clear: Ctrl+L | help\n\n";
+    std::cout
+        << vix::reply::terminal_style("◆", brandColor)
+        << " "
+        << vix::reply::terminal_style("Vix Reply", brandColor)
+        << "  "
+        << VIX_REPLY_VERSION
+        << "\n"
+        << "  "
+        << compiler_label()
+        << " · "
+        << platform_label()
+        << "\n"
+        << "  Ctrl+D exit"
+        << " · "
+        << "Ctrl+L clear"
+        << " · "
+        << "help"
+        << "\n\n";
   }
 
   static void print_commands_from_dispatcher()
@@ -2072,9 +2104,20 @@ namespace vix::reply
     {
       const fs::path cwd = fs::current_path();
 
+      constexpr std::string_view brandColor =
+          "1;38;2;243;119;38";
+
       const std::string prompt =
           cppMode
-              ? (cppLines.empty() ? "cpp> " : "...   ")
+              ? (
+                    cppLines.empty()
+                        ? vix::reply::terminal_style("cpp", brandColor) +
+                              " " +
+                              vix::reply::terminal_style("❯", brandColor) +
+                              " "
+                        : "    " +
+                              vix::reply::terminal_style("·", brandColor) +
+                              " ")
               : make_prompt(cwd);
 
       std::string line;
@@ -2331,7 +2374,37 @@ namespace vix::reply
         return result;
       };
 
-      ReadStatus status = read_line_edit(prompt, line, completer, onHistoryUp, onHistoryDown);
+      LineEditorOptions editorOptions;
+      editorOptions.codeMode = cppMode;
+      editorOptions.indentSize = 2;
+
+      if (const auto keymap =
+              get_env("VIX_REPLY_KEYMAP");
+          keymap &&
+          (*keymap == "vi" ||
+           *keymap == "vim"))
+      {
+        editorOptions.keymap =
+            LineEditorKeymap::Vi;
+      }
+
+      if (cppMode && cppBraceDepth > 0)
+      {
+        const auto indentLevel =
+            static_cast<std::size_t>(cppBraceDepth);
+
+        editorOptions.initialLine.assign(
+            indentLevel * editorOptions.indentSize,
+            ' ');
+      }
+
+      ReadStatus status = read_line_edit(
+          prompt,
+          line,
+          completer,
+          onHistoryUp,
+          onHistoryDown,
+          editorOptions);
 
       if (status == ReadStatus::Interrupted)
       {
@@ -2357,18 +2430,11 @@ namespace vix::reply
 
       reset_history_browse();
 
-      line = trim_copy(line);
-
-      if (line.empty())
-      {
-        continue;
-      }
-
-      history.add(line);
-
       if (cppMode)
       {
-        if (line == ":cancel" || line == ".cancel")
+        const std::string control = trim_copy(line);
+
+        if (control == ":cancel" || control == ".cancel")
         {
           cppMode = false;
           cppSeenMain = false;
@@ -2379,9 +2445,10 @@ namespace vix::reply
           continue;
         }
 
-        if (line == ":run" || line == ".run")
+        if (control == ":run" || control == ".run")
         {
-          const int rc = run_cpp_snippet_from_repl(cppLines);
+          const int rc =
+              run_cpp_snippet_from_repl(cppLines);
 
           cppMode = false;
           cppSeenMain = false;
@@ -2392,18 +2459,37 @@ namespace vix::reply
           continue;
         }
 
+        /*
+         * Keep an empty source line, but do not preserve the
+         * automatic indentation as actual whitespace.
+         */
+        if (control.empty())
+        {
+          cppLines.emplace_back();
+          continue;
+        }
+
+        history.add(line);
         cppLines.push_back(line);
 
-        if (looks_like_cpp_main(line))
+        if (looks_like_cpp_main(control))
         {
           cppSeenMain = true;
         }
 
         cppBraceDepth += count_cpp_braces_delta(line);
 
-        if (cppSeenMain && cppBraceDepth <= 0 && line.find('}') != std::string::npos)
+        if (cppBraceDepth < 0)
         {
-          const int rc = run_cpp_snippet_from_repl(cppLines);
+          cppBraceDepth = 0;
+        }
+
+        if (cppSeenMain &&
+            cppBraceDepth == 0 &&
+            control.find('}') != std::string::npos)
+        {
+          const int rc =
+              run_cpp_snippet_from_repl(cppLines);
 
           cppMode = false;
           cppSeenMain = false;
@@ -2415,6 +2501,15 @@ namespace vix::reply
 
         continue;
       }
+
+      line = trim_copy(line);
+
+      if (line.empty())
+      {
+        continue;
+      }
+
+      history.add(line);
 
       if (line == ":cpp" || line == ".cpp")
       {

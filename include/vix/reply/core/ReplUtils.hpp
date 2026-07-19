@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <string_view>
 
 namespace vix::reply
 {
@@ -92,6 +93,22 @@ namespace vix::reply
    * @return Environment variable value, or std::nullopt if missing or empty.
    */
   std::optional<std::string> get_env(const std::string &name);
+
+  /**
+   * @brief Checks whether styled terminal output can be used.
+   */
+  bool terminal_colors_enabled();
+
+  /**
+   * @brief Applies an ANSI style when terminal colors are enabled.
+   *
+   * @param text Text to decorate.
+   * @param code ANSI style code without the escape prefix.
+   * @return Styled or plain text.
+   */
+  std::string terminal_style(
+      std::string_view text,
+      std::string_view code);
 }
 
 #endif
