@@ -25,6 +25,16 @@
 #include <cstdlib>
 #endif
 
+#include <cstdio>
+#include <string_view>
+
+#if defined(_WIN32)
+#include <io.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace vix::reply
 {
   namespace
@@ -51,6 +61,68 @@ namespace vix::reply
       return std::getenv(name);
 #endif
     }
+  }
+
+  bool terminal_colors_enabled()
+  {
+    if (get_env("NO_COLOR").has_value())
+    {
+      return false;
+    }
+
+    if (const auto term = get_env("TERM");
+        term.has_value() && *term == "dumb")
+    {
+      return false;
+    }
+
+#if defined(_WIN32)
+    if (_isatty(_fileno(stdout)) == 0)
+    {
+      return false;
+    }
+
+    const HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+
+    if (handle == INVALID_HANDLE_VALUE || handle == nullptr)
+    {
+      return false;
+    }
+
+    DWORD mode = 0;
+
+    if (GetConsoleMode(handle, &mode) == 0)
+    {
+      return false;
+    }
+
+    return SetConsoleMode(
+               handle,
+               mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+#else
+    return ::isatty(STDOUT_FILENO) != 0;
+#endif
+  }
+
+  std::string terminal_style(
+      std::string_view text,
+      std::string_view code)
+  {
+    if (!terminal_colors_enabled())
+    {
+      return std::string(text);
+    }
+
+    std::string output;
+    output.reserve(text.size() + code.size() + 10);
+
+    output += "\033[";
+    output += code;
+    output += "m";
+    output += text;
+    output += "\033[0m";
+
+    return output;
   }
 
   std::optional<std::string> get_env(const std::string &name)
@@ -120,10 +192,47 @@ namespace vix::reply
 
   std::string make_prompt(const std::filesystem::path &cwd)
   {
-    (void)cwd;
-    return ">>> ";
-  }
+    std::string location;
 
+    const auto normalized = cwd.lexically_normal();
+    const auto home = user_home_dir().lexically_normal();
+
+    if (normalized == home)
+    {
+      location = "~";
+    }
+    else
+    {
+      const auto relative = normalized.lexically_relative(home);
+      const std::string relativeText = relative.generic_string();
+
+      if (!relativeText.empty() &&
+          relativeText != "." &&
+          !starts_with(relativeText, ".."))
+      {
+        location = "~/" + relativeText;
+      }
+      else
+      {
+        location = normalized.filename().string();
+
+        if (location.empty())
+        {
+          location = normalized.root_path().string();
+        }
+      }
+    }
+
+    constexpr std::string_view brandColor =
+        "1;38;2;243;119;38";
+
+    return terminal_style("vix", brandColor) +
+           " " +
+           location +
+           " " +
+           terminal_style("❯", brandColor) +
+           " ";
+  }
   void clear_screen()
   {
 #if defined(_WIN32)
