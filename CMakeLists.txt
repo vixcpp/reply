@@ -34,6 +34,10 @@ file(GLOB_RECURSE VIX_REPLY_SOURCES
 add_library(vix_reply STATIC ${VIX_REPLY_SOURCES})
 add_library(vix::reply ALIAS vix_reply)
 
+set_target_properties(vix_reply PROPERTIES
+  EXPORT_NAME reply
+)
+
 target_include_directories(vix_reply
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -71,12 +75,19 @@ endif()
 # ----------------------------------------------------
 # Dependencies
 # ----------------------------------------------------
-find_package(nlohmann_json CONFIG QUIET)
-
-if (TARGET nlohmann_json::nlohmann_json)
-  target_link_libraries(vix_reply PUBLIC nlohmann_json::nlohmann_json)
+if (VIX_JSON_BUNDLED)
+  target_include_directories(vix_reply PUBLIC
+    $<BUILD_INTERFACE:${VIX_JSON_BUNDLED_HEADERS_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  )
 else()
-  message(STATUS "[reply] nlohmann_json package not found, expecting nlohmann/json.hpp to be available in include paths")
+  find_package(nlohmann_json CONFIG QUIET)
+
+  if (TARGET nlohmann_json::nlohmann_json)
+    target_link_libraries(vix_reply PUBLIC nlohmann_json::nlohmann_json)
+  else()
+    message(STATUS "[reply] nlohmann_json package not found, expecting nlohmann/json.hpp to be available in include paths")
+  endif()
 endif()
 
 # ----------------------------------------------------
@@ -150,21 +161,57 @@ endif()
 # ----------------------------------------------------
 # Install
 # ----------------------------------------------------
-install(TARGETS vix_reply
-  EXPORT vix_reply_targets
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+if (DEFINED VIX_UMBRELLA_BUILD AND VIX_UMBRELLA_BUILD)
+  install(TARGETS vix_reply
+    EXPORT VixTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  )
+else()
+  include(CMakePackageConfigHelpers)
 
-install(DIRECTORY include/
-  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
+  install(TARGETS vix_reply
+    EXPORT vix_reply_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  )
 
-install(EXPORT vix_reply_targets
-  FILE vix_replyTargets.cmake
-  NAMESPACE vix::
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/vix_reply
-)
+  install(DIRECTORY include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  )
+
+  install(EXPORT vix_reply_targets
+    FILE vix_replyTargets.cmake
+    NAMESPACE vix::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/vix_reply
+  )
+
+  set(VIX_REPLY_JSON_BUNDLED OFF)
+  if (VIX_JSON_BUNDLED)
+    set(VIX_REPLY_JSON_BUNDLED ON)
+  endif()
+
+  configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vix_replyConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/vix_replyConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/vix_reply"
+  )
+
+  write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/vix_replyConfigVersion.cmake"
+    VERSION 0.1.0
+    COMPATIBILITY SameMajorVersion
+  )
+
+  install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/vix_replyConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/vix_replyConfigVersion.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/vix_reply"
+  )
+endif()
 
 message(STATUS "Vix Reply configured.")

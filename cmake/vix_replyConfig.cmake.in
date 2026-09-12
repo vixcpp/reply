@@ -1,0 +1,11 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+if (NOT @VIX_REPLY_JSON_BUNDLED@)
+  find_dependency(nlohmann_json CONFIG REQUIRED)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/vix_replyTargets.cmake")
+
+check_required_components(vix_reply)
